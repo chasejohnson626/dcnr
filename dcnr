@@ -167,8 +167,7 @@ cmd_new() {
     user_install="$(dirname "$DCNR_CONFIG")/install.sh"
     if [[ -f "$user_install" ]]; then
         info "running install script..."
-        docker cp "$user_install" "$(cname "$name"):/tmp/user-install.sh"
-        docker exec "$(cname "$name")" bash /tmp/user-install.sh
+        docker exec -i "$(cname "$name")" bash < "$user_install"
     fi
 
     success "container '$name' is ready"
