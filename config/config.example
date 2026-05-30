@@ -1,0 +1,69 @@
+# dcnr configuration
+# Installed to: ~/.config/dcnr/config
+# Edit this file to match your setup, then run: dcnr build
+
+# ── Image ─────────────────────────────────────────────────────────────────────
+
+# Name of the Docker image dcnr uses for new containers.
+# Run 'dcnr build' to build it from the Dockerfile in this repo.
+DCNR_IMAGE="dcnr-base"
+
+# ── Container defaults ────────────────────────────────────────────────────────
+
+# Username inside containers (must match Dockerfile ARG USERNAME).
+DCNR_USERNAME="dev"
+
+# Shell to open when running 'dcnr shell <name>'.
+DCNR_SHELL="/usr/bin/zsh"
+
+# ── Host mounts ───────────────────────────────────────────────────────────────
+#
+# Paths on your Mac that are mounted into each new container.
+# Format: "host_path:container_path" or "host_path:container_path:ro"
+#
+# Security notes:
+#   - Mounting ~/.config exposes only that directory. Docker bind mounts are
+#     scoped exactly to the specified path — a container cannot traverse up
+#     from /home/dev/.config to reach anything else on the host filesystem.
+#   - Plugin/data dirs (e.g. ~/.local/share/nvim) are NOT mounted; they live
+#     inside each container for supply chain isolation between containers.
+#   - Do NOT mount ~/.ssh. Private keys inside a container are a liability —
+#     use SSH agent forwarding instead (see SSH section below).
+#
+# Paths that don't exist on the host are silently skipped.
+
+DCNR_MOUNTS=(
+    # All XDG config (neovim, tmux, yazi, etc.) — read-only.
+    # To update lazy-lock.json or other generated config files, do so from
+    # your host and the change will be visible in all containers immediately.
+    "$HOME/.config:/home/dev/.config:ro"
+
+    # Tmux config if stored outside XDG (pick one or both as needed)
+    "$HOME/.tmux.conf:/home/dev/.tmux.conf:ro"
+
+    # Shell configs
+    "$HOME/.zshrc:/home/dev/.zshrc:ro"
+    "$HOME/.zprofile:/home/dev/.zprofile:ro"
+
+    # Git identity
+    "$HOME/.gitconfig:/home/dev/.gitconfig:ro"
+)
+
+# ── SSH agent forwarding ──────────────────────────────────────────────────────
+#
+# Do NOT mount ~/.ssh — private keys inside a container are a security risk.
+# Use SSH agent forwarding instead so containers can authenticate (e.g. git
+# over SSH) without ever seeing your private keys.
+#
+# On macOS with OrbStack, agent forwarding works automatically.
+# With Docker Desktop, add to DCNR_ENV and DCNR_MOUNTS:
+#
+#   DCNR_ENV+=("SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock")
+#   DCNR_MOUNTS+=("/run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock:ro")
+
+# ── Environment variables ─────────────────────────────────────────────────────
+
+DCNR_ENV=(
+    "TERM=xterm-256color"
+    "COLORTERM=truecolor"
+)

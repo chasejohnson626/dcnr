@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="0.1.0"
+
+# Resolve the real script location (follow symlinks so this works when installed)
+DCNR_SCRIPT="${BASH_SOURCE[0]}"
+while [[ -h "$DCNR_SCRIPT" ]]; do
+    DCNR_SCRIPT="$(readlink "$DCNR_SCRIPT")"
+    [[ "$DCNR_SCRIPT" != /* ]] && DCNR_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$DCNR_SCRIPT"
+done
+DCNR_REPO="$(cd "$(dirname "$DCNR_SCRIPT")" && pwd)"
+
+# Defaults (overridden by config file)
+DCNR_CONFIG="${DCNR_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/dcnr/config}"
+DCNR_IMAGE="dcnr-base"
+DCNR_USERNAME="dev"
+DCNR_SHELL="/usr/bin/zsh"
+DCNR_MOUNTS=()
+DCNR_ENV=()
+
+[[ -f "$DCNR_CONFIG" ]] && source "$DCNR_CONFIG"
+
+DCNR_LABEL="dcnr.managed=true"
+
+# Colors (disabled if not a terminal)
+if [[ -t 1 ]]; then
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
+    BLUE=$'\033[0;34m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; BOLD=''; NC=''
+fi
+
+die()     { printf "${RED}error:${NC} %s\n" "$*" >&2; exit 1; }
+warn()    { printf "${YELLOW}warn:${NC} %s\n" "$*" >&2; }
+info()    { printf "${BLUE}dcnr:${NC} %s\n" "$*"; }
+success() { printf "${GREEN}✓${NC} %s\n" "$*"; }
+
+check_docker() {
+    command -v docker &>/dev/null || die "docker not found in PATH"
+    docker info &>/dev/null       || die "docker daemon is not running"
+}
+
+validate_name() {
+    [[ "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] \
+        || die "invalid name '$1' — use letters, numbers, hyphens, and underscores only"
+}
+
+cname()            { echo "dcnr-$1"; }
+container_exists() { docker ps -a --filter "name=^$(cname "$1")$" --format "{{.Names}}" 2>/dev/null | grep -q .; }
+container_running(){ docker ps    --filter "name=^$(cname "$1")$" --format "{{.Names}}" 2>/dev/null | grep -q .; }
+image_exists()     { docker image inspect "$DCNR_IMAGE" &>/dev/null; }
+
+# ─── list ────────────────────────────────────────────────────────────────────
+
+cmd_list() {
+    check_docker
+
+    # --size computes the writable layer size (what the container has written
+    # on top of the image). It adds some latency but is worth it for dev containers.
+    local raw
+    raw=$(docker ps -a \
+        --filter "label=$DCNR_LABEL" \
+        --size \
+        --format "{{.Names}}\t{{.Status}}\t{{.CreatedAt}}\t{{.Size}}" 2>/dev/null)
+
+    if [[ -z "$raw" ]]; then
+        echo "No dcnr containers. Create one with: dcnr new <name>"
+        return
+    fi
+
+    local stats_file
+    stats_file=$(mktemp /tmp/dcnr-stats.XXXXXX)
+    trap "rm -f $stats_file" RETURN
+
+    local running_names=()
+    while IFS=$'\t' read -r full_name status _created _size; do
+        echo "$status" | grep -qi "^up" && running_names+=("$full_name")
+    done <<< "$raw"
+
+    if [[ ${#running_names[@]} -gt 0 ]]; then
+        docker stats --no-stream \
+            --format "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" \
+            "${running_names[@]}" > "$stats_file" 2>/dev/null || true
+    fi
+
+    # Separator strings pre-padded to exact column widths (ASCII only — Unicode
+    # chars are multi-byte and skew printf width counts). Status text is also
+    # pre-padded before color codes so ANSI bytes don't inflate alignment.
+    printf "${BOLD}%-20s %-10s %-8s %-12s %-10s %s${NC}\n" "NAME" "STATUS" "CPU%" "MEM" "SIZE" "CREATED"
+    printf "%-20s %-10s %-8s %-12s %-10s %s\n" \
+        "--------------------" "----------" "--------" "------------" "----------" "-------"
+
+    while IFS=$'\t' read -r full_name status created size; do
+        local name="${full_name#dcnr-}"
+        local cpu_pct="-" mem="-" state_text state_label
+        # {{.Size}} is "Xb (virtual Yb)" — take the first word (writable layer only)
+        local container_size
+        container_size=$(echo "$size" | cut -d' ' -f1)
+
+        if echo "$status" | grep -qi "^up"; then
+            state_text="running"
+            local stats_line
+            stats_line=$(grep "^${full_name}	" "$stats_file" 2>/dev/null | head -1 || true)
+            if [[ -n "$stats_line" ]]; then
+                cpu_pct=$(echo "$stats_line" | awk -F'\t' '{print $2}')
+                mem=$(echo "$stats_line"     | awk -F'\t' '{print $3}' | cut -d/ -f1 | tr -d ' ')
+            fi
+            state_label="${GREEN}$(printf '%-10s' "$state_text")${NC}"
+        else
+            state_text="stopped"
+            state_label="$(printf '%-10s' "$state_text")"
+        fi
+
+        printf "%-20s %s %-8s %-12s %-10s %s\n" \
+            "$name" "$state_label" "$cpu_pct" "$mem" "$container_size" "${created:0:19}"
+    done <<< "$raw"
+}
+
+# ─── new ─────────────────────────────────────────────────────────────────────
+
+cmd_new() {
+    local name="${1:-}"
+    [[ -z "$name" ]] && die "usage: dcnr new <name>"
+    validate_name "$name"
+    check_docker
+
+    if ! image_exists; then
+        warn "image '$DCNR_IMAGE' not found"
+        printf "Build it now? [y/N] " ; read -r answer
+        [[ "$answer" =~ ^[Yy]$ ]] || die "run 'dcnr build' first, then retry"
+        cmd_build
+    fi
+
+    container_exists "$name" && die "container '$name' already exists"
+
+    info "creating container '$name'..."
+
+    local -a run_args=(
+        -dit
+        --name "$(cname "$name")"
+        --label "$DCNR_LABEL"
+        --label "dcnr.project=$name"
+        --hostname "$name"
+    )
+
+    for mount in "${DCNR_MOUNTS[@]+"${DCNR_MOUNTS[@]}"}"; do
+        [[ -z "$mount" ]] && continue
+        local host_path="${mount%%:*}"
+        if [[ ! -e "$host_path" ]]; then
+            warn "skipping missing mount: $host_path"
+            continue
+        fi
+        run_args+=(-v "$mount")
+    done
+
+    for env_var in "${DCNR_ENV[@]+"${DCNR_ENV[@]}"}"; do
+        [[ -z "$env_var" ]] && continue
+        run_args+=(-e "$env_var")
+    done
+
+    run_args+=("$DCNR_IMAGE" "$DCNR_SHELL")
+
+    docker run "${run_args[@]}" > /dev/null
+
+    # Run user install script first so any tools it installs (e.g. neovim)
+    # are available when container-init runs plugin sync.
+    local user_install
+    user_install="$(dirname "$DCNR_CONFIG")/install.sh"
+    if [[ -f "$user_install" ]]; then
+        info "running user install script..."
+        docker cp "$user_install" "$(cname "$name"):/tmp/user-install.sh"
+        docker exec "$(cname "$name")" bash /tmp/user-install.sh
+    fi
+
+    local init_script="$DCNR_REPO/scripts/container-init.sh"
+    if [[ -f "$init_script" ]]; then
+        info "running first-time setup..."
+        docker cp "$init_script" "$(cname "$name"):/tmp/container-init.sh"
+        docker exec "$(cname "$name")" bash /tmp/container-init.sh
+    fi
+
+    success "container '$name' is ready"
+    echo "  enter:  dcnr shell $name"
+}
+
+# ─── delete ──────────────────────────────────────────────────────────────────
+
+cmd_delete() {
+    local name="${1:-}"
+    [[ -z "$name" ]] && die "usage: dcnr delete <name>"
+    check_docker
+    container_exists "$name" || die "container '$name' does not exist"
+
+    if container_running "$name"; then
+        warn "container '$name' is currently running"
+        printf "Stop and delete? [y/N] " ; read -r answer
+        [[ "$answer" =~ ^[Yy]$ ]] || die "cancelled"
+        docker stop "$(cname "$name")" > /dev/null
+    fi
+
+    docker rm "$(cname "$name")" > /dev/null
+    success "deleted '$name'"
+}
+
+# ─── start / stop ────────────────────────────────────────────────────────────
+
+cmd_start() {
+    local name="${1:-}"
+    [[ -z "$name" ]] && die "usage: dcnr start <name>"
+    check_docker
+    container_exists "$name" || die "container '$name' does not exist"
+
+    if container_running "$name"; then
+        warn "container '$name' is already running"
+        return
+    fi
+
+    docker start "$(cname "$name")" > /dev/null
+    success "started '$name'"
+}
+
+cmd_stop() {
+    local name="${1:-}"
+    [[ -z "$name" ]] && die "usage: dcnr stop <name>"
+    check_docker
+    container_exists "$name" || die "container '$name' does not exist"
+
+    if ! container_running "$name"; then
+        warn "container '$name' is not running"
+        return
+    fi
+
+    docker stop "$(cname "$name")" > /dev/null
+    success "stopped '$name'"
+}
+
+# ─── shell ───────────────────────────────────────────────────────────────────
+
+cmd_shell() {
+    local name="${1:-}"
+    [[ -z "$name" ]] && die "usage: dcnr shell <name>"
+    check_docker
+    container_exists "$name" || die "container '$name' does not exist"
+
+    if ! container_running "$name"; then
+        info "starting '$name'..."
+        docker start "$(cname "$name")" > /dev/null
+    fi
+
+    docker exec -it "$(cname "$name")" "$DCNR_SHELL"
+}
+
+# ─── info ────────────────────────────────────────────────────────────────────
+
+cmd_info() {
+    local name="${1:-}"
+    [[ -z "$name" ]] && die "usage: dcnr info <name>"
+    check_docker
+    container_exists "$name" || die "container '$name' does not exist"
+
+    local cn
+    cn=$(cname "$name")
+
+    printf "\n${BOLD}Container:${NC} %s\n" "$name"
+    docker inspect "$cn" --format \
+        "  Image:    {{.Config.Image}}
+  Status:   {{.State.Status}}
+  Created:  {{.Created}}
+  ID:       {{slice .Id 0 12}}"
+
+    if container_running "$name"; then
+        printf "\n${BOLD}Stats:${NC}\n"
+        docker stats --no-stream --format \
+            "  CPU:      {{.CPUPerc}}
+  Memory:   {{.MemUsage}}
+  Net I/O:  {{.NetIO}}
+  Block:    {{.BlockIO}}" "$cn"
+    fi
+
+    printf "\n${BOLD}Mounts:${NC}\n"
+    docker inspect "$cn" \
+        --format "{{range .Mounts}}  {{.Source}} → {{.Destination}} ({{.Mode}}){{println}}{{end}}"
+    echo
+}
+
+# ─── build ───────────────────────────────────────────────────────────────────
+
+cmd_build() {
+    check_docker
+
+    local dockerfile="$DCNR_REPO/Dockerfile"
+    [[ -f "$dockerfile" ]] || die "Dockerfile not found at $dockerfile"
+
+    info "building image '$DCNR_IMAGE' (this takes a few minutes on first run)..."
+    docker build -t "$DCNR_IMAGE" "$DCNR_REPO"
+    success "image '$DCNR_IMAGE' built"
+}
+
+# ─── version / help ──────────────────────────────────────────────────────────
+
+cmd_version() {
+    echo "dcnr $VERSION"
+}
+
+cmd_help() {
+    cat <<EOF
+
+${BOLD}dcnr${NC} — Docker dev container manager v${VERSION}
+
+${BOLD}Usage:${NC}
+  dcnr <command> [args]
+
+${BOLD}Commands:${NC}
+  list              List all dcnr containers with status and stats
+  new <name>        Create and start a new dev container
+  delete <name>     Delete a container (prompts if running)
+  start <name>      Start a stopped container
+  stop <name>       Stop a running container
+  shell <name>      Open an interactive shell in a container
+  info <name>       Show detailed info and stats for a container
+  build             Build/rebuild the dcnr base image
+  version           Print version
+  help              Show this help
+
+${BOLD}Config:${NC}  ${DCNR_CONFIG}
+${BOLD}Image:${NC}   ${DCNR_IMAGE}
+${BOLD}Repo:${NC}    ${DCNR_REPO}
+
+EOF
+}
+
+# ─── main ────────────────────────────────────────────────────────────────────
+
+main() {
+    local command="${1:-help}"
+    shift || true
+
+    case "$command" in
+        list|ls)          cmd_list "$@" ;;
+        new|create)       cmd_new "$@" ;;
+        delete|rm|remove) cmd_delete "$@" ;;
+        start)            cmd_start "$@" ;;
+        stop)             cmd_stop "$@" ;;
+        shell|sh|exec)    cmd_shell "$@" ;;
+        info)             cmd_info "$@" ;;
+        build)            cmd_build "$@" ;;
+        version|-v|--version) cmd_version ;;
+        help|-h|--help)   cmd_help ;;
+        *) die "unknown command '$command' — run 'dcnr help' for usage" ;;
+    esac
+}
+
+main "$@"
