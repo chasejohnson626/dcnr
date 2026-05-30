@@ -8,22 +8,44 @@ Per-project Docker dev containers with neovim (LazyVim), tmux, and yazi. Your co
 - Docker CLI in your PATH
 - Your dotfiles on the host machine
 
+## How the pieces fit together
+
+```
+dcnr/
+├── Dockerfile          Base Docker image — Ubuntu 24.04 + tmux + dev tools.
+│                       Intentionally minimal; editors go in your install script.
+├── dcnr                The CLI you run on your Mac (list, new, shell, etc.)
+├── scripts/
+│   └── install.sh      Run once on your Mac to install the dcnr command.
+└── examples/
+    ├── config          Template for ~/.config/dcnr/config — tells dcnr how to
+    │                   create containers (what to mount, which image, which shell).
+    │                   Read by dcnr on your Mac BEFORE the container is created.
+    └── install.sh      Runs INSIDE each new container to install your tools
+                        (neovim, yazi, etc.). Copied here from ~/.config/dcnr/install.sh.
+```
+
+**The key distinction between the two files in `examples/`:**
+
+- `examples/config` is read on your **Mac** before a container is created. It controls things like which host paths get mounted inside containers. By the time a container exists, this file has already done its job.
+- `examples/install.sh` runs **inside** each container after it is created. It installs software. It cannot affect mounts or any other creation-time decisions.
+
 ## Installation
 
 ```bash
-git clone https://github.com/your-username/cnr ~/.dcnr
+git clone https://github.com/your-username/dcnr ~/.dcnr
 cd ~/.dcnr && ./scripts/install.sh
 ```
 
-This symlinks `dcnr` to `~/.local/bin/dcnr` and creates `~/.config/dcnr/config` from the example. Make sure `~/.local/bin` is in your `$PATH`.
+This symlinks `dcnr` to `~/.local/bin/dcnr` and creates `~/.config/dcnr/config` from `examples/config`. Make sure `~/.local/bin` is in your `$PATH`.
 
 ## Quick start
 
 ```bash
-# 1. Edit your config to point at your dotfiles
+# 1. Edit your config to set your mount paths
 $EDITOR ~/.config/dcnr/config
 
-# 2. Build the base image (one-time, ~5 min)
+# 2. Build the base image (one-time, a few minutes)
 dcnr build
 
 # 3. Create a container for a project
@@ -37,7 +59,7 @@ dcnr shell my-project
 ## Commands
 
 ```
-dcnr list              List all containers with status, CPU%, and memory
+dcnr list              List all containers with status, CPU%, memory, and size
 dcnr new <name>        Create and start a new dev container
 dcnr shell <name>      Open an interactive shell (auto-starts if stopped)
 dcnr stop <name>       Stop a running container
@@ -49,44 +71,30 @@ dcnr version           Print version
 dcnr help              Show usage
 ```
 
-## Configuration
+## Configuration (`~/.config/dcnr/config`)
 
-`~/.config/dcnr/config` is sourced as a bash file. The main thing to set is `DCNR_MOUNTS`:
+Created from `examples/config` on install. The main thing to set is `DCNR_MOUNTS` — the host paths that get bind-mounted into every new container:
 
 ```bash
 DCNR_MOUNTS=(
-    "$HOME/.config:/home/dev/.config:ro"   # all XDG config in one mount
+    "$HOME/.config:/home/dev/.config:ro"
     "$HOME/.tmux.conf:/home/dev/.tmux.conf:ro"
     "$HOME/.zshrc:/home/dev/.zshrc:ro"
-    "$HOME/.zprofile:/home/dev/.zprofile:ro"
     "$HOME/.gitconfig:/home/dev/.gitconfig:ro"
 )
 ```
 
-Mount paths that don't exist on the host are silently skipped, so the example config works for most setups without modification.
+Mount paths that don't exist on the host are silently skipped.
 
-**Do not mount `~/.ssh`.** Private keys inside a container are a security risk. Use SSH agent forwarding instead — on macOS with OrbStack this works automatically. See [`config/config.example`](config/config.example) for Docker Desktop instructions.
+**Do not mount `~/.ssh`.** Private keys inside a container are a security risk. Use SSH agent forwarding instead — on macOS with OrbStack this works automatically. See [`examples/config`](examples/config) for Docker Desktop instructions.
 
-See [`config/config.example`](config/config.example) for all options.
+## Global install script (`~/.config/dcnr/install.sh`)
 
-## Global install script
+If this file exists, `dcnr new` copies it into each new container and runs it before the plugin sync step. Use it to install tools you want in every container — editors, file managers, language runtimes, etc.
 
-`~/.config/dcnr/install.sh` runs inside every new container before the plugin sync step. Use it to install tools you want in all your containers — editors, file managers, language runtimes, etc.
+The script runs as the `dev` user with passwordless sudo. It does not exist by default.
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Install neovim
-curl -fsSL https://github.com/neovim/neovim/releases/download/v0.10.4/nvim-linux-x86_64.tar.gz \
-    -o /tmp/nvim.tar.gz
-sudo tar -C /usr/local --strip-components=1 -xzf /tmp/nvim.tar.gz
-rm /tmp/nvim.tar.gz
-```
-
-The script runs as the `dev` user with passwordless sudo. It does not exist by default — create it if you want per-user global tooling.
-
-An example script that installs neovim and yazi is in [`examples/install.sh`](examples/install.sh). You can symlink it directly:
+`examples/install.sh` in this repo installs neovim and yazi and can be symlinked directly:
 
 ```bash
 ln -s "$(pwd)/examples/install.sh" ~/.config/dcnr/install.sh
@@ -94,11 +102,11 @@ ln -s "$(pwd)/examples/install.sh" ~/.config/dcnr/install.sh
 
 ## How it works
 
-Each container is a lean Ubuntu 24.04 environment with tmux and common dev tools pre-installed. Editors and other tools are installed at container-creation time via your global install script. Your config files are bind-mounted from the host so you get your exact setup in every container. Project files live inside the container — `git clone` your repos into `~/projects/` and commit/push as your backup strategy.
+Each container is a lean Ubuntu 24.04 environment with tmux and common dev tools pre-installed. Editors and other tools are installed at container-creation time via your global install script. Your config files are bind-mounted from the host so you get your exact editor and shell setup in every container. Project files live inside the container — `git clone` your repos into `~/projects/` and commit/push as your backup strategy.
 
 ### Supply chain isolation
 
-The entire `~/.config` directory is mounted read-only from your host, but the downloaded plugin binaries (`~/.local/share/nvim`) live only inside the container and are never shared. Each container independently downloads its own copy of every plugin. A compromised plugin in one container cannot reach another.
+`~/.config` is mounted read-only from your host, but downloaded plugin binaries (`~/.local/share/nvim`) live only inside each container and are never shared. Each container downloads its own copy of every plugin independently, so a compromised plugin in one container cannot reach another.
 
 ```
 Host                        Container A            Container B
@@ -109,35 +117,23 @@ Host                        Container A            Container B
 
 ### Customizing the base image
 
-Edit the `Dockerfile` and run `dcnr build` to rebuild. To pin different tool versions:
-
-```dockerfile
-ARG NVIM_VERSION=0.10.4
-ARG YAZI_VERSION=0.4.2
-```
-
-To use a different username or UID (useful if your host UID isn't 1000):
+Edit `Dockerfile` and run `dcnr build` to rebuild. To use a different username or UID (useful if your host UID isn't 1000):
 
 ```bash
 docker build --build-arg USER_UID=$(id -u) --build-arg USER_GID=$(id -g) -t dcnr-base .
 ```
 
-Or set `DCNR_IMAGE` in your config to use a custom image name.
+Or set `DCNR_IMAGE` in your config to point to a custom image.
 
 ## Workflow tips
 
 **Multiple terminals in one container** — start tmux inside the container:
 ```bash
 dcnr shell my-project
-# then inside the container:
+# inside the container:
 tmux
 ```
 
-**Check what's running:**
-```bash
-dcnr list
-```
-
-**Save work before deleting** — containers are ephemeral. Push to git or export files before `dcnr delete`.
+**Save work before deleting** — containers are ephemeral. Push to git before `dcnr delete`.
 
 **Per-container tool versions** — install language runtimes (Go, Rust, Node) inside the container however you like. They stay isolated from other containers and your host.

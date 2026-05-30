@@ -163,21 +163,12 @@ cmd_new() {
 
     docker run "${run_args[@]}" > /dev/null
 
-    # Run user install script first so any tools it installs (e.g. neovim)
-    # are available when container-init runs plugin sync.
     local user_install
     user_install="$(dirname "$DCNR_CONFIG")/install.sh"
     if [[ -f "$user_install" ]]; then
-        info "running user install script..."
+        info "running install script..."
         docker cp "$user_install" "$(cname "$name"):/tmp/user-install.sh"
         docker exec "$(cname "$name")" bash /tmp/user-install.sh
-    fi
-
-    local init_script="$DCNR_REPO/scripts/container-init.sh"
-    if [[ -f "$init_script" ]]; then
-        info "running first-time setup..."
-        docker cp "$init_script" "$(cname "$name"):/tmp/container-init.sh"
-        docker exec "$(cname "$name")" bash /tmp/container-init.sh
     fi
 
     success "container '$name' is ready"

@@ -24,7 +24,7 @@ fi
 # Create config dir and copy example if no config exists yet
 mkdir -p "$CONFIG_DIR"
 if [[ ! -f "$CONFIG_DIR/config" ]]; then
-    cp "$REPO_DIR/config/config.example" "$CONFIG_DIR/config"
+    cp "$REPO_DIR/examples/config" "$CONFIG_DIR/config"
     echo "  config: $CONFIG_DIR/config (created from example)"
     CONFIG_CREATED=true
 else

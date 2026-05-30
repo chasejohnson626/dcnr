@@ -17,6 +17,9 @@ sudo tar -C /usr/local --strip-components=1 -xzf /tmp/nvim.tar.gz
 rm /tmp/nvim.tar.gz
 echo "    $(nvim --version | head -1)"
 
+echo "==> syncing neovim plugins..."
+[[ -d "$HOME/.config/nvim" ]] && nvim --headless "+Lazy! sync" +qa 2>/dev/null || true
+
 echo "==> installing yazi v${YAZI_VERSION}..."
 if [ "$UARCH" = "aarch64" ]; then YAZI_ARCH="aarch64"; else YAZI_ARCH="x86_64"; fi
 curl -fsSL "https://github.com/sxyazi/yazi/releases/download/v${YAZI_VERSION}/yazi-${YAZI_ARCH}-unknown-linux-gnu.zip" \
