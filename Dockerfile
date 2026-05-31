@@ -46,12 +46,11 @@ RUN userdel -r ubuntu 2>/dev/null || true \
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}
 
-# Pre-create the projects dir and local share dir. Tool-specific data dirs
-# (e.g. ~/.local/share/nvim) are intentionally NOT pre-created here — they are
+# Pre-create the local share dir. Tool-specific data dirs (e.g.
+# ~/.local/share/nvim) are intentionally NOT pre-created here — they are
 # created by each tool on first run and always live in the container, never
 # mounted from the host. This is the supply chain isolation boundary.
 RUN mkdir -p \
     /home/${USERNAME}/.local/share \
-    /home/${USERNAME}/projects
 
 CMD ["/usr/bin/zsh"]
