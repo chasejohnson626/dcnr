@@ -51,6 +51,6 @@ WORKDIR /home/${USERNAME}
 # created by each tool on first run and always live in the container, never
 # mounted from the host. This is the supply chain isolation boundary.
 RUN mkdir -p \
-    /home/${USERNAME}/.local/share \
+    /home/${USERNAME}/.local/share
 
 CMD ["/usr/bin/zsh"]
