@@ -41,13 +41,33 @@ DCNR_MOUNTS=(
     # Tmux config if stored outside XDG (pick one or both as needed)
     "$HOME/.tmux.conf:/home/dev/.tmux.conf:ro"
 
-    # Shell configs
-    "$HOME/.zshrc:/home/dev/.zshrc:ro"
-    "$HOME/.zprofile:/home/dev/.zprofile:ro"
-
     # Git identity
     "$HOME/.gitconfig:/home/dev/.gitconfig:ro"
 )
+
+# ── Shell rc files ────────────────────────────────────────────────────────────
+#
+# The host's ~/.zshrc and ~/.zprofile are intentionally NOT mounted. They
+# usually contain host-specific setup (Homebrew PATHs, 'eval' calls for
+# tools that aren't installed in the container, powerlevel10k instant
+# prompt, macOS-only aliases, etc.) that breaks or makes no sense inside a
+# Linux container.
+#
+# Instead, put dcnr-specific shell rc files in your dcnr config directory:
+#
+#   ~/.config/dcnr/zshrc        -> /home/dev/.zshrc
+#   ~/.config/dcnr/zprofile     -> /home/dev/.zprofile
+#   ~/.config/dcnr/bashrc       -> /home/dev/.bashrc
+#   ~/.config/dcnr/bash_profile -> /home/dev/.bash_profile
+#   ~/.config/dcnr/profile      -> /home/dev/.profile
+#
+# Any of these that exist are copied into each new container at creation
+# time (after the container is created, before the install script runs).
+# They are container-local and writable, so the install script can append
+# to them (e.g. the ssh-agent bootstrap). An example lives at
+# examples/zshrc in this repo — symlink or copy it:
+#
+#   cp examples/zshrc ~/.config/dcnr/zshrc
 
 # ── SSH agent forwarding ──────────────────────────────────────────────────────
 #

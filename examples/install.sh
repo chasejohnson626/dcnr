@@ -91,6 +91,11 @@ fi
 # Append an ssh-agent bootstrap to interactive shell rc files so the agent
 # is started (and the key loaded) automatically on every new shell.
 # Idempotent: only appended once, guarded by the marker comment.
+#
+# These rc files are container-local (not bind-mounted from the host), so
+# they are writable. If you supplied a custom ~/.zshrc via
+# ~/.config/dcnr/zshrc, the bootstrap is appended to it; otherwise one is
+# created here.
 SSH_AGENT_BLOCK='
 # --- dcnr ssh-agent bootstrap ---
 _DSNR_AGENT_ENV="$HOME/.ssh/agent-env"
@@ -110,7 +115,12 @@ unset _DSNR_AGENT_ENV
 '
 append_once() {
     local rc="$1"
-    touch "$rc"
+    # Create if missing (touch is a no-op if it exists) and append the
+    # bootstrap block. Guarded by the marker so re-runs are idempotent.
+    if ! touch "$rc" 2>/dev/null; then
+        echo "    warn: cannot write to $rc — skipping ssh-agent bootstrap"
+        return 0
+    fi
     if ! grep -q "dcnr ssh-agent bootstrap" "$rc"; then
         printf '%s\n' "$SSH_AGENT_BLOCK" >> "$rc"
     fi

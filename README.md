@@ -79,7 +79,6 @@ Created from `examples/config` on install. The main thing to set is `DCNR_MOUNTS
 DCNR_MOUNTS=(
     "$HOME/.config:/home/dev/.config:ro"
     "$HOME/.tmux.conf:/home/dev/.tmux.conf:ro"
-    "$HOME/.zshrc:/home/dev/.zshrc:ro"
     "$HOME/.gitconfig:/home/dev/.gitconfig:ro"
 )
 ```
@@ -87,6 +86,8 @@ DCNR_MOUNTS=(
 Mount paths that don't exist on the host are silently skipped.
 
 **Do not mount `~/.ssh`.** Private keys inside a container are a security risk. Use SSH agent forwarding instead — on macOS with OrbStack this works automatically. See [`examples/config`](examples/config) for Docker Desktop instructions.
+
+**Do not mount `~/.zshrc` / `~/.zprofile`.** Your host shell rc usually contains host-specific setup (Homebrew PATHs, `eval` calls for tools not installed in the container, powerlevel10k instant prompt, macOS aliases, etc.) that breaks or makes no sense inside a Linux container. Instead, use a dcnr-specific shell rc — see [Shell rc files](#shell-rc-files) below.
 
 ## Global install script (`~/.config/dcnr/install.sh`)
 
@@ -101,6 +102,26 @@ ln -s "$(pwd)/examples/install.sh" ~/.config/dcnr/install.sh
 ```
 
 It installs the official Node.js 22 binary to `/usr/local` (Node is a general-purpose runtime, not just for pi — Ubuntu 24.04's apt only ships Node 18, which is too old), then installs [pi](https://pi.dev) globally via `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`. Both land in `/usr/local/bin`, which is already on the default `$PATH`, so no extra shell configuration is needed.
+
+## Shell rc files
+
+`dcnr` does **not** mount your host's `~/.zshrc` or `~/.zprofile` — those typically carry host-specific setup that doesn't belong in a container. Instead, you can provide dcnr-specific rc files in your config directory, and `dcnr new` copies any that exist into each new container's home before running the install script:
+
+| Host file                         | Container path             |
+| --------------------------------- | -------------------------- |
+| `~/.config/dcnr/zshrc`            | `~/.zshrc`                 |
+| `~/.config/dcnr/zprofile`         | `~/.zprofile`              |
+| `~/.config/dcnr/bashrc`           | `~/.bashrc`                |
+| `~/.config/dcnr/bash_profile`     | `~/.bash_profile`          |
+| `~/.config/dcnr/profile`          | `~/.profile`               |
+
+These are container-local and writable, so the install script can append to them (the bundled example appends an ssh-agent bootstrap to `~/.zshrc` and `~/.bashrc`). A minimal starting point lives at [`examples/zshrc`](examples/zshrc):
+
+```bash
+cp examples/zshrc ~/.config/dcnr/zshrc
+```
+
+None of these files are required — if you don't provide one, your shell falls back to the system defaults and the install script creates a minimal `~/.zshrc` / `~/.bashrc` as needed.
 
 ## How it works
 

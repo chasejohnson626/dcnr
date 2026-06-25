@@ -163,8 +163,25 @@ cmd_new() {
 
     docker run "${run_args[@]}" > /dev/null
 
+    local dcnr_dir
+    dcnr_dir="$(dirname "$DCNR_CONFIG")"
+
+    # Copy user-defined shell rc files (e.g. ~/.config/dcnr/zshrc) into the
+    # new container's home. Unlike the host's real ~/.zshrc, these are
+    # dcnr-specific and container-local (writable, not bind-mounted), so
+    # the install script can freely append to them and shells start clean
+    # without dragging in host-specific PATHs/evals. Skipped if absent.
+    # Run as the container's default user (dev) via tee so ownership is
+    # correct without a separate chown.
+    local rc src
+    for rc in zshrc zprofile bashrc bash_profile profile; do
+        src="$dcnr_dir/$rc"
+        [[ -f "$src" ]] || continue
+        docker exec -i "$(cname "$name")" tee "/home/$DCNR_USERNAME/.$rc" >/dev/null < "$src"
+    done
+
     local user_install
-    user_install="$(dirname "$DCNR_CONFIG")/install.sh"
+    user_install="$dcnr_dir/install.sh"
     if [[ -f "$user_install" ]]; then
         info "running install script..."
         docker exec -i "$(cname "$name")" bash < "$user_install"
