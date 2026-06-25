@@ -6,6 +6,7 @@ set -euo pipefail
 
 NVIM_VERSION="0.10.4"
 YAZI_VERSION="0.4.2"
+NODE_VERSION="22.23.1"
 
 UARCH=$(uname -m)
 
@@ -36,3 +37,27 @@ sudo mv "/tmp/yazi-extract/yazi-${YAZI_ARCH}-unknown-linux-gnu/ya" /usr/local/bi
 sudo chmod +x /usr/local/bin/yazi
 rm -rf "/tmp/${YAZI_FILE}" /tmp/yazi-extract
 echo "    $(yazi --version 2>/dev/null | head -1 || echo 'yazi installed')"
+
+echo "==> installing Node.js v${NODE_VERSION}..."
+# Node.js is a general-purpose runtime, not just for pi. Ubuntu 24.04's apt
+# only ships Node 18, which is too old for modern tools (pi needs >= 22.19),
+# so install the official Node 22 binary tarball to /usr/local. It lands in
+# /usr/local/bin, which is on the default PATH for every shell — no env
+# drop-in or PATH tweaking needed.
+if [ "$UARCH" = "aarch64" ]; then NODE_ARCH="arm64"; else NODE_ARCH="x64"; fi
+NODE_FILE="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
+NODE_BASE="https://nodejs.org/dist/v${NODE_VERSION}"
+curl -fsSL "${NODE_BASE}/${NODE_FILE}"   -o "/tmp/${NODE_FILE}"
+curl -fsSL "${NODE_BASE}/SHASUMS256.txt" -o "/tmp/SHASUMS256.txt"
+(cd /tmp && grep " ${NODE_FILE}\$" SHASUMS256.txt | sha256sum --check -)
+sudo tar -C /usr/local --strip-components=1 -xJf "/tmp/${NODE_FILE}"
+rm "/tmp/${NODE_FILE}" "/tmp/SHASUMS256.txt"
+echo "    $(node --version) / $(npm --version)"
+
+echo "==> installing pi..."
+# Install pi (https://pi.dev) as a global npm package, non-interactively.
+# This avoids the pi.dev interactive installer entirely. --ignore-scripts
+# skips the package's postinstall hooks. npm's global prefix is /usr/local,
+# so the `pi` launcher lands in /usr/local/bin (already on the default PATH).
+sudo npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+echo "    $(pi --version 2>/dev/null || echo 'pi installed')"

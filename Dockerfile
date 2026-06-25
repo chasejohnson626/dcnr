@@ -21,8 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
-    nodejs \
-    npm \
+    # NOTE: nodejs/npm intentionally NOT installed here. Ubuntu 24.04 ships
+    # Node 18, which is too old for modern tools (e.g. pi needs >= 22.19).
+    # Node 22 is installed per-container by your install script instead —
+    # see examples/install.sh. xz-utils is needed to extract that tarball.
+    xz-utils \
     ripgrep \
     fd-find \
     fzf \

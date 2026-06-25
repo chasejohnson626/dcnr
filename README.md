@@ -94,15 +94,17 @@ If this file exists, `dcnr new` copies it into each new container and runs it be
 
 The script runs as the `dev` user with passwordless sudo. It does not exist by default.
 
-`examples/install.sh` in this repo installs neovim and yazi and can be symlinked directly:
+`examples/install.sh` in this repo installs neovim, yazi, Node.js, and pi, and can be symlinked directly:
 
 ```bash
 ln -s "$(pwd)/examples/install.sh" ~/.config/dcnr/install.sh
 ```
 
+It installs the official Node.js 22 binary to `/usr/local` (Node is a general-purpose runtime, not just for pi — Ubuntu 24.04's apt only ships Node 18, which is too old), then installs [pi](https://pi.dev) globally via `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`. Both land in `/usr/local/bin`, which is already on the default `$PATH`, so no extra shell configuration is needed.
+
 ## How it works
 
-Each container is a lean Ubuntu 24.04 environment with tmux and common dev tools pre-installed. Editors and other tools are installed at container-creation time via your global install script. Your config files are bind-mounted from the host so you get your exact editor and shell setup in every container. Project files live inside the container — `git clone` your repos into `~/projects/` and commit/push as your backup strategy.
+Each container is a lean Ubuntu 24.04 environment with tmux and common dev tools pre-installed. Editors and other tools (including language runtimes like Node) are installed at container-creation time via your global install script — the base image intentionally does not ship nodejs/npm, since Ubuntu 24.04's versions are too old for modern tools. Everything the install script adds goes to `/usr/local/bin`, which is on the default `$PATH`. Your config files are bind-mounted from the host so you get your exact editor and shell setup in every container. Project files live inside the container — `git clone` your repos into `~/projects/` and commit/push as your backup strategy.
 
 ### Supply chain isolation
 
