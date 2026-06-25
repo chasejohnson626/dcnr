@@ -4,7 +4,7 @@ set -euo pipefail
 # Global dcnr install script — runs inside each new container on creation.
 # Add anything you want available in every dev container.
 
-NVIM_VERSION="0.10.4"
+NVIM_VERSION="0.11.7"
 YAZI_VERSION="0.4.2"
 NODE_VERSION="22.23.1"
 
@@ -14,11 +14,13 @@ echo "==> installing neovim v${NVIM_VERSION}..."
 if [ "$UARCH" = "aarch64" ]; then NVIM_ARCH="arm64"; else NVIM_ARCH="x86_64"; fi
 NVIM_FILE="nvim-linux-${NVIM_ARCH}.tar.gz"
 NVIM_BASE="https://github.com/neovim/neovim/releases/download/v${NVIM_VERSION}"
-curl -fsSL "${NVIM_BASE}/${NVIM_FILE}"            -o "/tmp/${NVIM_FILE}"
-curl -fsSL "${NVIM_BASE}/${NVIM_FILE}.sha256sum"  -o "/tmp/${NVIM_FILE}.sha256sum"
-(cd /tmp && sha256sum --check "${NVIM_FILE}.sha256sum")
+curl -fsSL "${NVIM_BASE}/${NVIM_FILE}" -o "/tmp/${NVIM_FILE}"
+if curl -fsSL "${NVIM_BASE}/${NVIM_FILE}.sha256sum" -o "/tmp/${NVIM_FILE}.sha256sum" 2>/dev/null; then
+    (cd /tmp && sha256sum --check "${NVIM_FILE}.sha256sum")
+    rm -f "/tmp/${NVIM_FILE}.sha256sum"
+fi
 sudo tar -C /usr/local --strip-components=1 -xzf "/tmp/${NVIM_FILE}"
-rm "/tmp/${NVIM_FILE}" "/tmp/${NVIM_FILE}.sha256sum"
+rm -f "/tmp/${NVIM_FILE}"
 echo "    $(nvim --version | head -1)"
 
 echo "==> syncing neovim plugins..."
