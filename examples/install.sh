@@ -61,3 +61,65 @@ echo "==> installing pi..."
 # so the `pi` launcher lands in /usr/local/bin (already on the default PATH).
 sudo npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 echo "    $(pi --version 2>/dev/null || echo 'pi installed')"
+
+echo "==> setting up SSH key..."
+# Generate an ed25519 SSH key (GitHub's recommended type) if one doesn't
+# already exist, then wire up ssh-agent so the user never has to manage it —
+# the key is auto-loaded on every interactive shell. The key is generated
+# with an empty passphrase because it lives only inside this ephemeral,
+# supply-chain-isolated dev container; if you'd prefer a passphrase, run
+# ssh-keygen -p -f ~/.ssh/id_ed25519 yourself after first boot.
+SSH_DIR="$HOME/.ssh"
+mkdir -p "$SSH_DIR"
+chmod 700 "$SSH_DIR"
+
+# Label the key with git's configured email if present, else a sensible
+# container-local default.
+SSH_EMAIL="$(git config --global user.email 2>/dev/null || true)"
+if [[ -z "$SSH_EMAIL" ]]; then
+    SSH_EMAIL="${USER}@$(hostname)"
+fi
+
+SSH_KEY="$SSH_DIR/id_ed25519"
+if [[ ! -f "$SSH_KEY" ]]; then
+    ssh-keygen -t ed25519 -C "$SSH_EMAIL" -f "$SSH_KEY" -N "" >/dev/null
+    echo "    generated new ed25519 key: $SSH_KEY"
+else
+    echo "    existing ed25519 key found: $SSH_KEY"
+fi
+
+# Append an ssh-agent bootstrap to interactive shell rc files so the agent
+# is started (and the key loaded) automatically on every new shell.
+# Idempotent: only appended once, guarded by the marker comment.
+SSH_AGENT_BLOCK='
+# --- dcnr ssh-agent bootstrap ---
+_DSNR_AGENT_ENV="$HOME/.ssh/agent-env"
+if [[ -z "$SSH_AUTH_SOCK" ]] || ! kill -0 "${SSH_AGENT_PID:-0}" 2>/dev/null; then
+    if [[ -f "$_DSNR_AGENT_ENV" ]] && kill -0 "$(sed -n "s/SSH_AGENT_PID=\([0-9]\+\).*/\1/p" "$_DSNR_AGENT_ENV" 2>/dev/null)" 2>/dev/null; then
+        source "$_DSNR_AGENT_ENV" >/dev/null
+    else
+        ssh-agent -s > "$_DSNR_AGENT_ENV"
+        source "$_DSNR_AGENT_ENV" >/dev/null
+    fi
+fi
+if [[ -n "$SSH_AUTH_SOCK" ]] && ! ssh-add -l 2>/dev/null | grep -q "id_ed25519"; then
+    ssh-add "$HOME/.ssh/id_ed25519" 2>/dev/null
+fi
+unset _DSNR_AGENT_ENV
+# --- end dcnr ssh-agent bootstrap ---
+'
+append_once() {
+    local rc="$1"
+    touch "$rc"
+    if ! grep -q "dcnr ssh-agent bootstrap" "$rc"; then
+        printf '%s\n' "$SSH_AGENT_BLOCK" >> "$rc"
+    fi
+}
+append_once "$HOME/.zshrc"
+append_once "$HOME/.bashrc"
+
+echo ""
+echo "SSH public key (add this to GitHub / your Git host):"
+echo "------------------------------------------------------------"
+cat "$SSH_KEY.pub"
+echo "------------------------------------------------------------"
