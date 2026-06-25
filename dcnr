@@ -120,8 +120,29 @@ cmd_list() {
 # ─── new ─────────────────────────────────────────────────────────────────────
 
 cmd_new() {
+    local -a ports=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --port|-p)
+                [[ -n "${2:-}" ]] || die "usage: dcnr new [--port <host:container>] <name>"
+                ports+=("$2")
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                die "unknown flag '$1' — run 'dcnr help' for usage"
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
     local name="${1:-}"
-    [[ -z "$name" ]] && die "usage: dcnr new <name>"
+    [[ -z "$name" ]] && die "usage: dcnr new [--port <host:container>] <name>"
     validate_name "$name"
     check_docker
 
@@ -157,6 +178,10 @@ cmd_new() {
     for env_var in "${DCNR_ENV[@]+"${DCNR_ENV[@]}"}"; do
         [[ -z "$env_var" ]] && continue
         run_args+=(-e "$env_var")
+    done
+
+    for port in "${ports[@]+"${ports[@]}"}"; do
+        run_args+=(-p "$port")
     done
 
     run_args+=("$DCNR_IMAGE" "$DCNR_SHELL")
@@ -320,7 +345,7 @@ ${BOLD}Usage:${NC}
 
 ${BOLD}Commands:${NC}
   list              List all dcnr containers with status and stats
-  new <name>        Create and start a new dev container
+  new [--port <h:c>] <name>  Create and start a new dev container
   delete <name>     Delete a container (prompts if running)
   start <name>      Start a stopped container
   stop <name>       Stop a running container
